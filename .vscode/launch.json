@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python Debugger: Capture Script",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/pacman-contest/src/contest/capture.py",
+      "console": "integratedTerminal",
+      "args": [
+        "-r",
+        "pacman-contest/src/contest/baseline_team",
+        "-b",
+        "my_team.py"
+      ]
+    }
+  ]
+}
