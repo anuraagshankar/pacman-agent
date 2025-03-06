@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python Debugger: Capture Script",
+      "name": "Play as Blue Team",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/pacman-contest/src/contest/capture.py",
@@ -12,6 +12,19 @@
         "pacman-contest/src/contest/baseline_team",
         "-b",
         "my_team.py"
+      ]
+    },
+    {
+      "name": "Play as Red Team",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/pacman-contest/src/contest/capture.py",
+      "console": "integratedTerminal",
+      "args": [
+        "-r",
+        "my_team.py",
+        "-b",
+        "pacman-contest/src/contest/baseline_team"
       ]
     }
   ]
