@@ -23,7 +23,7 @@ from contest.util import nearest_point
 #################
 
 def create_team(first_index, second_index, is_red,
-                first='RunningMudkipsOffensiveAgent', second='DefensiveReflexAgent', num_training=0):
+                first='RunningMudkipsOffensiveAgent', second='RunningMudkipsDefensiveAgent', num_training=0):
     """
     This function should return a list of two agents that will form the
     team, initialized using firstIndex and secondIndex as their agent
@@ -198,12 +198,101 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
 
 """
 TODO:
-    - Entire defensive agent
     - Share vision between agents
+    - Offensive agent: 
+        - If approaching end of time, just come back
+        - Attack larger clusters of food
+    - Defensive agent: 
+        - Protect larger clusters of food
 """
 
 
-class RunningMudkipsOffensiveAgent(CaptureAgent):
+class RunningMudkipsAgent(CaptureAgent):
+    graph = {}
+    nodes = []
+    shortest_actions = {}
+
+    def __init__(self, index, time_for_computing=0.1):
+        super().__init__(index, time_for_computing)
+
+    def register_initial_state(self, game_state: GameState):
+        super().register_initial_state(game_state)
+        self.is_red = game_state.is_on_red_team(self.index)
+        self.team_idxs = game_state.get_red_team_indices(
+        ) if self.is_red else game_state.get_blue_team_indices()
+        self.enemy_idxs = game_state.get_blue_team_indices(
+        ) if self.is_red else game_state.get_red_team_indices()
+        self.width, self.height = game_state.data.layout.width, game_state.data.layout.height
+
+        border_x = self.width // 2 - 1 if self.is_red else self.width // 2
+        self.border = [(border_x, y) for y in range(self.height)
+                       if not game_state.has_wall(border_x, y)]
+
+        self.total_food = len(game_state.get_red_food().as_list())
+
+        if RunningMudkipsAgent.graph == {}:
+            RunningMudkipsAgent.graph = create_graph(game_state)
+            RunningMudkipsAgent.nodes = set(RunningMudkipsAgent.graph.keys())
+            RunningMudkipsAgent.shortest_actions = all_pairs_first_actions(
+                RunningMudkipsAgent.graph)
+
+    def choose_action(self, game_state):
+        pass
+
+    def _get_enemy_location_distribution(self, agent_location, game_state: GameState, nodes, enemy_fn):
+        """
+        Provides the probability that an enemy is at a food specific location
+        Enemy probability is uniform for all nodes within a specific range of the true enemy location
+
+        TODO: Improve this heuristic
+        If the enemy location is known, use manual risk probability = 1 - normalized distance from location to food??
+        """
+        distances = game_state.get_agent_distances()
+
+        true_distances = np.array(
+            [RunningMudkipsAgent.shortest_actions[agent_location, loc][0] for loc in nodes])
+
+        enemy_distances = [distances[enemy_index]
+                           for enemy_index in self.enemy_idxs]
+
+        enemy_dist_probs = [np.zeros(len(nodes)) for _ in range(2)]
+        for i in range(2):
+            # TODO: Add better logic for being scared
+            enemy_agent = game_state.get_agent_state(self.enemy_idxs[i])
+            if enemy_fn(enemy_agent):
+                enemy_dist_probs[i] = np.array([GameState.get_distance_prob(
+                    x, enemy_distances[i]) for x in true_distances])
+
+        for i in range(2):
+            pos = game_state.get_agent_position(self.enemy_idxs[i])
+            if pos is not None and enemy_fn(enemy_agent):
+                # TODO: Define better risk measure
+                nodes_from_enemy = np.array(
+                    [RunningMudkipsAgent.shortest_actions[pos, loc][0] for loc in nodes])
+                enemy_dist_probs[i] = 1 - \
+                    (nodes_from_enemy / (self.width + self.height))
+
+        enemy_distribution = enemy_dist_probs[0] + \
+            enemy_dist_probs[1] - enemy_dist_probs[0] * enemy_dist_probs[1]
+
+        return {loc: (prob, dist) for loc, prob, dist in zip(nodes, enemy_distribution, true_distances)}
+
+    def _get_best_node(self, nodes_dict, alpha, optim_fn=min):
+        max_possible_distance = self.width + self.height
+
+        def calculate_score(item):
+            coords, (risk, distance) = item
+            normalized_distance = distance / max_possible_distance
+            return (alpha * normalized_distance) + ((1-alpha) * risk)
+
+        best_item = optim_fn(nodes_dict.items(), key=calculate_score)
+        best_coords = best_item[0]
+        best_score = calculate_score(best_item)
+
+        return best_coords, best_score
+
+
+class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
     def __init__(self, index, time_for_computing=.1):
         super().__init__(index, time_for_computing)
 
@@ -222,23 +311,6 @@ class RunningMudkipsOffensiveAgent(CaptureAgent):
 
     def register_initial_state(self, game_state: GameState):
         super().register_initial_state(game_state)
-        self.is_red = game_state.is_on_red_team(self.index)
-        self.team_idxs = game_state.get_red_team_indices(
-        ) if self.is_red else game_state.get_blue_team_indices()
-        self.enemy_idxs = game_state.get_blue_team_indices(
-        ) if self.is_red else game_state.get_red_team_indices()
-
-        self.width, self.height = game_state.data.layout.width, game_state.data.layout.height
-        self.graph = create_graph(game_state)
-        self.nodes = list(self.graph.keys())
-        self.shortest_actions = all_pairs_first_actions(self.graph)
-
-        # Nodes that represent the last column of our team
-        border_x = self.width // 2 - 1 if self.is_red else self.width // 2
-        self.border = [(border_x, y) for y in range(self.height)
-                       if not game_state.has_wall(border_x, y)]
-
-        self.total_food = len(game_state.get_red_food().as_list())
 
     def choose_action(self, game_state: GameState):
         """
@@ -250,6 +322,9 @@ class RunningMudkipsOffensiveAgent(CaptureAgent):
         agent = game_state.get_agent_state(self.index)
         food = game_state.get_blue_food().as_list(
         ) if self.is_red else game_state.get_red_food().as_list()
+
+        def is_not_scared_ghost(agent):
+            return not agent.is_pacman and agent.scared_timer == 0
 
         # Option 1: Food node picking option
         """
@@ -263,37 +338,35 @@ class RunningMudkipsOffensiveAgent(CaptureAgent):
         # enemy_locations = [agent.get_position(
         # ) for agent in enemy_agents if agent.scared_timer > 0 and agent.get_position()]
 
-        enemy_dist_for_food = self.__get_enemy_location_distribution(
-            loc, game_state, food)
-        min_risk_food, risk_food = self.get_best_node(
-            enemy_dist_for_food, self.ALPHA)
+        enemy_dist_for_food = self._get_enemy_location_distribution(
+            loc, game_state, food, is_not_scared_ghost)
+        min_risk_food, risk_food = self._get_best_node(
+            enemy_dist_for_food, self.ALPHA, min)
         destination = min_risk_food
         # print(f'Agent: {loc}, Min Risk Food: {min_risk_food}, Risk: {risk}')
 
         if not agent.is_pacman:
-            return self.shortest_actions[loc, destination][1]
+            return RunningMudkipsAgent.shortest_actions[loc, destination][1]
 
         # Option 2: Going back option
         """
         Considerations: 
             - If carrying + returned == total - 2
             - Number of points carrying
-            - Proximity to border
-            - Risk from border
             - Risk from food
+            - TODO: Proximity to border
+            - TODO: Time remaining
         """
         collected_max_points = self.__collected_max_points(game_state)
-        enemy_dist_for_border = self.__get_enemy_location_distribution(
-            loc, game_state, self.border)
-        min_risk_border, risk_border = self.get_best_node(
-            enemy_dist_for_border, self.BETA)
+        enemy_dist_for_border = self._get_enemy_location_distribution(
+            loc, game_state, self.border, is_not_scared_ghost)
+        min_risk_border, risk_border = self._get_best_node(
+            enemy_dist_for_border, self.BETA, min)
 
         carrying = agent.num_carrying
         normalized_carrying = carrying / (carrying + len(food) - 2)
         return_factor = self.RHO * \
             normalized_carrying + (1-self.RHO) * risk_food
-        print(
-            f'Carrying: {carrying}, Normalized: {normalized_carrying}, Food Risk: {risk_food}')
 
         if collected_max_points or (return_factor > self.EPS and carrying > 0):
             destination = min_risk_border
@@ -307,24 +380,16 @@ class RunningMudkipsOffensiveAgent(CaptureAgent):
         capsules = game_state.get_blue_capsules(
         ) if self.is_red else game_state.get_red_capsules()
         if len(capsules) > 0 and not collected_max_points:
-            enemy_dist_for_capsule = self.__get_enemy_location_distribution(
-                loc, game_state, capsules)
-            min_risk_capsule, risk_capsule = self.get_best_node(
-                enemy_dist_for_capsule, self.GAMMA)
+            enemy_dist_for_capsule = self._get_enemy_location_distribution(
+                loc, game_state, capsules, is_not_scared_ghost)
+            min_risk_capsule, risk_capsule = self._get_best_node(
+                enemy_dist_for_capsule, self.GAMMA, min)
             if risk_capsule <= self.DELTA:
                 destination = min_risk_capsule
 
-        # Option 4: Enemies are in scared state
-        """
-        Considerations:
-            - Scared timer
+        # Option 4: Somthing using the possible actions
 
-        For now just disregarding scared opponents, logic added in distribution calc function
-        """
-
-        # Option 5: Somthing using the possible actions
-
-        return self.shortest_actions[loc, destination][1]
+        return RunningMudkipsAgent.shortest_actions[loc, destination][1]
 
     def __collected_max_points(self, game_state: GameState):
         team_agents = [game_state.get_agent_state(
@@ -335,56 +400,70 @@ class RunningMudkipsOffensiveAgent(CaptureAgent):
 
         return food_collected >= self.total_food - 2
 
-    def get_best_node(self, nodes_dict, alpha):
-        max_possible_distance = self.width + self.height
 
-        def calculate_score(item):
-            coords, (risk, distance) = item
-            normalized_distance = distance / max_possible_distance
-            return (alpha * normalized_distance) + ((1-alpha) * risk)
+class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
+    def __init__(self, index, time_for_computing=.1):
+        super().__init__(index, time_for_computing)
 
-        best_item = min(nodes_dict.items(), key=calculate_score)
-        best_coords = best_item[0]
-        best_score = calculate_score(best_item)
+    def register_initial_state(self, game_state: GameState):
+        super().register_initial_state(game_state)
+        start = 0 if self.is_red else self.width // 2
+        end = self.width // 2 if self.is_red else self.width
+        self.team_area = [(x, y) for x in range(start, end) for y in range(
+            0, self.height) if (x, y) in RunningMudkipsAgent.nodes]
+        self.medoid = self._get_medoid(self.team_area)
 
-        return best_coords, best_score
+    def _get_medoid(self, nodes):
+        n = len(nodes)
+        dist_matrix = np.zeros((n, n))
 
-    def __get_enemy_location_distribution(self, agent_location, game_state: GameState, nodes):
+        for i in range(n):
+            for j in range(i+1, n):
+                dist = RunningMudkipsAgent.shortest_actions[nodes[i], nodes[j]][0]
+                dist_matrix[i, j] = dist
+                dist_matrix[j, i] = dist
+
+        total_distances = np.sum(dist_matrix, axis=1)
+        medoid_idx = np.argmin(total_distances)
+
+        return nodes[medoid_idx]
+
+    def choose_action(self, game_state: GameState):
         """
-        Provides the probability that an enemy is at a food specific location
-        Enemy probability is uniform for all nodes within a specific range of the true enemy location
-
-        TODO: Improve this heuristic
-        If the enemy location is known, use manual risk probability = 1 - normalized distance from location to food??
+        Get noisy estimate of of enemy pacman(s), go to most probable location
         """
-        distances = game_state.get_agent_distances()
 
-        true_distances = np.array(
-            [self.shortest_actions[agent_location, loc][0] for loc in nodes])
+        def is_pacman(agent):
+            return agent.is_pacman
 
-        enemy_distances = [distances[enemy_index]
-                           for enemy_index in self.enemy_idxs]
+        loc = game_state.get_agent_position(self.index)
+        agent = game_state.get_agent_state(self.index)
+        food = game_state.get_red_food().as_list(
+        ) if self.is_red else game_state.get_blue_food().as_list()
 
-        enemy_dist_probs = [np.zeros(len(nodes)) for _ in range(2)]
-        for i in range(2):
-            # TODO: Add better logic for being scared
-            enemy_agent = game_state.get_agent_state(self.enemy_idxs[i])
-            if not enemy_agent.is_pacman and enemy_agent.scared_timer == 0:
-                enemy_dist_probs[i] = np.array([GameState.get_distance_prob(
-                    x, enemy_distances[i]) for x in true_distances])
+        enemy_agents = [game_state.get_agent_state(
+            idx) for idx in self.enemy_idxs]
 
+        # Option 1: If no pacman, go to center of grid
+        if not enemy_agents[0].is_pacman and not enemy_agents[1].is_pacman:
+            self.medoid = self._get_medoid(food)
+            return RunningMudkipsAgent.shortest_actions[loc, self.medoid][1]
+
+        # Option 2: If enemy is visible, go to it
         for i in range(2):
             pos = game_state.get_agent_position(self.enemy_idxs[i])
-            if pos is not None and not enemy_agent.is_pacman and enemy_agent.scared_timer == 0:
-                # TODO: Define better risk measure
-                nodes_from_enemy = np.array(
-                    [self.shortest_actions[pos, loc][0] for loc in nodes])
-                enemy_dist_probs[i] = 1 - \
-                    (nodes_from_enemy / (self.width + self.height))
+            if enemy_agents[i].is_pacman and pos:
+                return RunningMudkipsAgent.shortest_actions[loc, pos][1]
 
-        enemy_distribution = enemy_dist_probs[0] + \
-            enemy_dist_probs[1] - enemy_dist_probs[0] * enemy_dist_probs[1]
+        # Option 3: Go to highest probability pacman
+        enemy_dist = self._get_enemy_location_distribution(
+            loc, game_state, self.team_area, is_pacman)
+        max_prob_loc, prob = self._get_best_node(
+            enemy_dist, 0.5, max)
+        destination = max_prob_loc
 
-        return {loc: (prob, dist) for loc, prob, dist in zip(nodes, enemy_distribution, true_distances)}
+        # Option 4: Prevent the pacman from getting to an energy dot
 
-# for the defensive agent, is there a better logic than simply going behind the enemy?
+        # Option 5: If I am scared, dont go to pacman?
+
+        return RunningMudkipsAgent.shortest_actions[loc, destination][1]
