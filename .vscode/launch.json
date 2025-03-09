@@ -26,6 +26,14 @@
         "-b",
         "pacman-contest/src/contest/baseline_team"
       ]
+    },
+    {
+      "name": "Play against Yourself",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/pacman-contest/src/contest/capture.py",
+      "console": "integratedTerminal",
+      "args": ["-r", "my_team.py", "-b", "my_team.py"]
     }
   ]
 }

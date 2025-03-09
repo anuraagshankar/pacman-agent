@@ -392,6 +392,7 @@ class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
         Considerations: 
             - If carrying + returned == total - 2
             - Number of points carrying
+                - TODO: In the end start
             - Risk from food
             - TODO: Proximity to border
             - TODO: Time remaining
