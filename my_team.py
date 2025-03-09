@@ -236,6 +236,11 @@ class RunningMudkipsAgent(CaptureAgent):
             RunningMudkipsAgent.shortest_actions = all_pairs_first_actions(
                 RunningMudkipsAgent.graph)
 
+            RunningMudkipsAgent.location_probs = [{} for _ in range(4)]
+            for idx in self.enemy_idxs:
+                RunningMudkipsAgent.location_probs[idx] = self._reset_distribution(
+                    game_state.get_initial_agent_position(idx))
+
     def choose_action(self, game_state):
         pass
 
@@ -251,6 +256,8 @@ class RunningMudkipsAgent(CaptureAgent):
 
         true_distances = np.array(
             [RunningMudkipsAgent.shortest_actions[agent_location, loc][0] for loc in nodes])
+        enemy_probs = np.array([[RunningMudkipsAgent.location_probs[self.enemy_idxs[i]][loc]
+                                 for loc in nodes] for i in range(2)])
 
         enemy_distances = [distances[enemy_index]
                            for enemy_index in self.enemy_idxs]
@@ -262,6 +269,7 @@ class RunningMudkipsAgent(CaptureAgent):
             if enemy_fn(enemy_agent):
                 enemy_dist_probs[i] = np.array([GameState.get_distance_prob(
                     x, enemy_distances[i]) for x in true_distances])
+                enemy_dist_probs[i] = enemy_dist_probs[i] * enemy_probs[i]
 
         for i in range(2):
             pos = game_state.get_agent_position(self.enemy_idxs[i])
@@ -291,6 +299,35 @@ class RunningMudkipsAgent(CaptureAgent):
 
         return best_coords, best_score
 
+    def _reset_distribution(self, position):
+        distribution = {node: 0 for node in RunningMudkipsAgent.graph}
+        distribution[position] = 1
+        return distribution
+
+    def _reset_enemy_distribution(self, game_state: GameState):
+        for idx in self.enemy_idxs:
+            pos = game_state.get_agent_position(idx)
+            if pos:
+                RunningMudkipsAgent.location_probs[idx] = self._reset_distribution(
+                    pos)
+
+    def _update_distribution(self):
+        for idx in self.enemy_idxs:
+            next_distribution = {node: 0 for node in RunningMudkipsAgent.graph}
+
+            for node, prob in RunningMudkipsAgent.location_probs[idx].items():
+                if prob == 0:
+                    continue
+
+                neighbors = RunningMudkipsAgent.graph[node]
+                transition_prob = prob / (len(neighbors) + 1)
+                next_distribution[node] += transition_prob
+
+                for neighbor in neighbors:
+                    next_distribution[neighbor] += transition_prob
+
+            RunningMudkipsAgent.location_probs[idx] = next_distribution
+
 
 class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
     def __init__(self, index, time_for_computing=.1):
@@ -318,6 +355,8 @@ class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
             - Risk from nodes: Probability distribution of enemy location at nodes: 
                 either using noisy distance or true enemy position
         """
+        self._update_distribution()
+        self._reset_enemy_distribution(game_state)
         loc = game_state.get_agent_position(self.index)
         agent = game_state.get_agent_state(self.index)
         food = game_state.get_blue_food().as_list(
