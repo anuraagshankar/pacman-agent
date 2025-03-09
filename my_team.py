@@ -199,8 +199,6 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
 """
 TODO:
     - Entire defensive agent
-    - Choose energy over food if close
-    - Run back condition on risk - num carrying and previous risk
     - Share vision between agents
 """
 
@@ -211,34 +209,131 @@ class RunningMudkipsOffensiveAgent(CaptureAgent):
 
         # food proximity to enemy probable risk, higher means cares more about food proximity
         self.ALPHA = 0.2
+        # border proximity to enemy probable risk, higher means cares more about border proximity
+        self.BETA = 0.6
+        # capsule proximity to enemy probable risk, higher means cares more about capsule proximity
+        self.GAMMA = 0.8
+        # threshold to pickup capsule
+        self.DELTA = 0.1
+        # weights to prioritise num_carrying against food collection risk, higher means cares more about num_carrying
+        self.RHO = 0.6
+        # threshold to return to border
+        self.EPS = 0.3
 
-    def register_initial_state(self, game_state):
+    def register_initial_state(self, game_state: GameState):
         super().register_initial_state(game_state)
+        self.is_red = game_state.is_on_red_team(self.index)
+        self.team_idxs = game_state.get_red_team_indices(
+        ) if self.is_red else game_state.get_blue_team_indices()
+        self.enemy_idxs = game_state.get_blue_team_indices(
+        ) if self.is_red else game_state.get_red_team_indices()
+
         self.width, self.height = game_state.data.layout.width, game_state.data.layout.height
         self.graph = create_graph(game_state)
         self.nodes = list(self.graph.keys())
         self.shortest_actions = all_pairs_first_actions(self.graph)
 
+        # Nodes that represent the last column of our team
+        border_x = self.width // 2 - 1 if self.is_red else self.width // 2
+        self.border = [(border_x, y) for y in range(self.height)
+                       if not game_state.has_wall(border_x, y)]
+
+        self.total_food = len(game_state.get_red_food().as_list())
+
     def choose_action(self, game_state: GameState):
         """
-        Picks among the actions with the highest Q(s,a).
+        General definitions:
+            - Risk from nodes: Probability distribution of enemy location at nodes: 
+                either using noisy distance or true enemy position
         """
-        actions = game_state.get_legal_actions(self.index)
-        """
-        Approach:
-            - Get probabilities of location of enemy agents
-            - Mask the probabilities where there is no food
-            - Find least probable location of enemy agent and go there using the shortest path
+        loc = game_state.get_agent_position(self.index)
+        agent = game_state.get_agent_state(self.index)
+        food = game_state.get_blue_food().as_list(
+        ) if self.is_red else game_state.get_red_food().as_list()
 
-        Additions:
-            - We can go to nearby food even if agent is not too far
+        # Option 1: Food node picking option
         """
-        loc = game_state.get_agent_state(self.index).get_position()
-        enemy_dist = self.__get_enemy_location_distribution(loc, game_state)
+        Considerations:
+            - Distance to various food locations
+            - Risk from food
+        """
+        # Treat scared agents as food
+        # enemy_agents = [game_state.get_agent_state(
+        #     idx) for idx in self.enemy_idxs]
+        # enemy_locations = [agent.get_position(
+        # ) for agent in enemy_agents if agent.scared_timer > 0 and agent.get_position()]
 
-        min_risk_food, risk = self.get_best_node(enemy_dist, self.ALPHA)
-        print(f'Agent: {loc}, Min Risk Food: {min_risk_food}, Risk: {risk}')
-        return self.shortest_actions[loc, min_risk_food][1]
+        enemy_dist_for_food = self.__get_enemy_location_distribution(
+            loc, game_state, food)
+        min_risk_food, risk_food = self.get_best_node(
+            enemy_dist_for_food, self.ALPHA)
+        destination = min_risk_food
+        # print(f'Agent: {loc}, Min Risk Food: {min_risk_food}, Risk: {risk}')
+
+        if not agent.is_pacman:
+            return self.shortest_actions[loc, destination][1]
+
+        # Option 2: Going back option
+        """
+        Considerations: 
+            - If carrying + returned == total - 2
+            - Number of points carrying
+            - Proximity to border
+            - Risk from border
+            - Risk from food
+        """
+        collected_max_points = self.__collected_max_points(game_state)
+        enemy_dist_for_border = self.__get_enemy_location_distribution(
+            loc, game_state, self.border)
+        min_risk_border, risk_border = self.get_best_node(
+            enemy_dist_for_border, self.BETA)
+
+        carrying = agent.num_carrying
+        normalized_carrying = carrying / (carrying + len(food) - 2)
+        return_factor = self.RHO * \
+            normalized_carrying + (1-self.RHO) * risk_food
+        print(
+            f'Carrying: {carrying}, Normalized: {normalized_carrying}, Food Risk: {risk_food}')
+
+        if collected_max_points or (return_factor > self.EPS and carrying > 0):
+            destination = min_risk_border
+
+        # Option 3: Capsule picking option
+        """
+        Considerations:
+            - Proximity to dot
+            - Risk from capsule
+        """
+        capsules = game_state.get_blue_capsules(
+        ) if self.is_red else game_state.get_red_capsules()
+        if len(capsules) > 0 and not collected_max_points:
+            enemy_dist_for_capsule = self.__get_enemy_location_distribution(
+                loc, game_state, capsules)
+            min_risk_capsule, risk_capsule = self.get_best_node(
+                enemy_dist_for_capsule, self.GAMMA)
+            if risk_capsule <= self.DELTA:
+                destination = min_risk_capsule
+
+        # Option 4: Enemies are in scared state
+        """
+        Considerations:
+            - Scared timer
+
+        For now just disregarding scared opponents, logic added in distribution calc function
+        """
+
+        # Option 5: Somthing using the possible actions
+
+        return self.shortest_actions[loc, destination][1]
+
+    def __collected_max_points(self, game_state: GameState):
+        team_agents = [game_state.get_agent_state(
+            idx) for idx in self.team_idxs]
+
+        food_collected = team_agents[0].num_carrying + team_agents[0].num_returned + \
+            team_agents[1].num_carrying + team_agents[1].num_returned
+
+        return food_collected >= self.total_food - 2
 
     def get_best_node(self, nodes_dict, alpha):
         max_possible_distance = self.width + self.height
@@ -254,7 +349,7 @@ class RunningMudkipsOffensiveAgent(CaptureAgent):
 
         return best_coords, best_score
 
-    def __get_enemy_location_distribution(self, agent_location, game_state: GameState):
+    def __get_enemy_location_distribution(self, agent_location, game_state: GameState, nodes):
         """
         Provides the probability that an enemy is at a food specific location
         Enemy probability is uniform for all nodes within a specific range of the true enemy location
@@ -262,36 +357,34 @@ class RunningMudkipsOffensiveAgent(CaptureAgent):
         TODO: Improve this heuristic
         If the enemy location is known, use manual risk probability = 1 - normalized distance from location to food??
         """
-        is_red = game_state.is_on_red_team(self.index)
         distances = game_state.get_agent_distances()
 
-        food = game_state.get_blue_food().as_list()  # TODO: Add blue team logic
         true_distances = np.array(
-            [self.shortest_actions[agent_location, loc][0] for loc in food])
+            [self.shortest_actions[agent_location, loc][0] for loc in nodes])
 
-        enemy_agent_indices = game_state.get_blue_team_indices()  # TODO: Add blue team
         enemy_distances = [distances[enemy_index]
-                           for enemy_index in enemy_agent_indices]
+                           for enemy_index in self.enemy_idxs]
 
-        enemy_dist_probs = [np.zeros(len(food)) for _ in range(2)]
+        enemy_dist_probs = [np.zeros(len(nodes)) for _ in range(2)]
         for i in range(2):
-            if not game_state.get_agent_state(enemy_agent_indices[i]).is_pacman:
+            # TODO: Add better logic for being scared
+            enemy_agent = game_state.get_agent_state(self.enemy_idxs[i])
+            if not enemy_agent.is_pacman and enemy_agent.scared_timer == 0:
                 enemy_dist_probs[i] = np.array([GameState.get_distance_prob(
                     x, enemy_distances[i]) for x in true_distances])
 
         for i in range(2):
-            pos = game_state.get_agent_state(
-                enemy_agent_indices[i]).get_position()
-            if pos is not None:
+            pos = game_state.get_agent_position(self.enemy_idxs[i])
+            if pos is not None and not enemy_agent.is_pacman and enemy_agent.scared_timer == 0:
                 # TODO: Define better risk measure
-                food_from_enemy = np.array(
-                    [self.shortest_actions[pos, loc][0] for loc in food])
+                nodes_from_enemy = np.array(
+                    [self.shortest_actions[pos, loc][0] for loc in nodes])
                 enemy_dist_probs[i] = 1 - \
-                    (food_from_enemy / (self.width + self.height))
+                    (nodes_from_enemy / (self.width + self.height))
 
         enemy_distribution = enemy_dist_probs[0] + \
             enemy_dist_probs[1] - enemy_dist_probs[0] * enemy_dist_probs[1]
 
-        return {loc: (prob, dist) for loc, prob, dist in zip(food, enemy_distribution, true_distances)}
+        return {loc: (prob, dist) for loc, prob, dist in zip(nodes, enemy_distribution, true_distances)}
 
 # for the defensive agent, is there a better logic than simply going behind the enemy?
