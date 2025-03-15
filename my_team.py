@@ -45,168 +45,6 @@ def create_team(first_index, second_index, is_red,
 # Agents #
 ##########
 
-class ReflexCaptureAgent(CaptureAgent):
-    """
-    A base class for reflex agents that choose score-maximizing actions
-    """
-
-    def __init__(self, index, time_for_computing=.1):
-        super().__init__(index, time_for_computing)
-        self.start = None
-
-    def register_initial_state(self, game_state):
-        self.start = game_state.get_agent_position(self.index)
-        CaptureAgent.register_initial_state(self, game_state)
-
-    def choose_action(self, game_state):
-        """
-        Picks among the actions with the highest Q(s,a).
-        """
-        actions = game_state.get_legal_actions(self.index)
-
-        # You can profile your evaluation time by uncommenting these lines
-        # start = time.time()
-        values = [self.evaluate(game_state, a) for a in actions]
-        # print 'eval time for agent %d: %.4f' % (self.index, time.time() - start)
-
-        max_value = max(values)
-        best_actions = [a for a, v in zip(actions, values) if v == max_value]
-
-        food_left = len(self.get_food(game_state).as_list())
-
-        if food_left <= 2:
-            best_dist = 9999
-            best_action = None
-            for action in actions:
-                successor = self.get_successor(game_state, action)
-                pos2 = successor.get_agent_position(self.index)
-                dist = self.get_maze_distance(self.start, pos2)
-                if dist < best_dist:
-                    best_action = action
-                    best_dist = dist
-            return best_action
-
-        return random.choice(best_actions)
-
-    def get_successor(self, game_state, action):
-        """
-        Finds the next successor which is a grid position (location tuple).
-        """
-        successor = game_state.generate_successor(self.index, action)
-        pos = successor.get_agent_state(self.index).get_position()
-        if pos != nearest_point(pos):
-            # Only half a grid position was covered
-            return successor.generate_successor(self.index, action)
-        else:
-            return successor
-
-    def evaluate(self, game_state, action):
-        """
-        Computes a linear combination of features and feature weights
-        """
-        features = self.get_features(game_state, action)
-        weights = self.get_weights(game_state, action)
-        return features * weights
-
-    def get_features(self, game_state, action):
-        """
-        Returns a counter of features for the state
-        """
-        features = util.Counter()
-        successor = self.get_successor(game_state, action)
-        features['successor_score'] = self.get_score(successor)
-        return features
-
-    def get_weights(self, game_state, action):
-        """
-        Normally, weights do not depend on the game state.  They can be either
-        a counter or a dictionary.
-        """
-        return {'successor_score': 1.0}
-
-
-class OffensiveReflexAgent(ReflexCaptureAgent):
-    """
-  A reflex agent that seeks food. This is an agent
-  we give you to get an idea of what an offensive agent might look like,
-  but it is by no means the best or only way to build an offensive agent.
-  """
-
-    def get_features(self, game_state, action):
-        features = util.Counter()
-        successor = self.get_successor(game_state, action)
-        food_list = self.get_food(successor).as_list()
-        features['successor_score'] = - \
-            len(food_list)  # self.getScore(successor)
-
-        # Compute distance to the nearest food
-
-        if len(food_list) > 0:  # This should always be True,  but better safe than sorry
-            my_pos = successor.get_agent_state(self.index).get_position()
-            min_distance = min([self.get_maze_distance(my_pos, food)
-                               for food in food_list])
-            features['distance_to_food'] = min_distance
-        return features
-
-    def get_weights(self, game_state, action):
-        return {'successor_score': 100, 'distance_to_food': -1}
-
-
-class DefensiveReflexAgent(ReflexCaptureAgent):
-    """
-    A reflex agent that keeps its side Pacman-free. Again,
-    this is to give you an idea of what a defensive agent
-    could be like.  It is not the best or only way to make
-    such an agent.
-    """
-
-    def get_features(self, game_state, action):
-        features = util.Counter()
-        successor = self.get_successor(game_state, action)
-
-        my_state = successor.get_agent_state(self.index)
-        my_pos = my_state.get_position()
-
-        # Computes whether we're on defense (1) or offense (0)
-        features['on_defense'] = 1
-        if my_state.is_pacman:
-            features['on_defense'] = 0
-
-        # Computes distance to invaders we can see
-        enemies = [successor.get_agent_state(i)
-                   for i in self.get_opponents(successor)]
-        invaders = [
-            a for a in enemies if a.is_pacman and a.get_position() is not None]
-        features['num_invaders'] = len(invaders)
-        if len(invaders) > 0:
-            dists = [self.get_maze_distance(
-                my_pos, a.get_position()) for a in invaders]
-            features['invader_distance'] = min(dists)
-
-        if action == Directions.STOP:
-            features['stop'] = 1
-        rev = Directions.REVERSE[game_state.get_agent_state(
-            self.index).configuration.direction]
-        if action == rev:
-            features['reverse'] = 1
-
-        return features
-
-    def get_weights(self, game_state, action):
-        return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -2}
-
-
-"""
-TODO:
-    - Share vision between agents
-    - Offensive agent: 
-        - If approaching end of time, just come back
-        - Attack larger clusters of food
-    - Defensive agent: 
-        - Protect larger clusters of food
-"""
-
-
 class RunningMudkipsAgent(CaptureAgent):
     graph = {}
     nodes = []
@@ -293,10 +131,14 @@ class RunningMudkipsAgent(CaptureAgent):
             normalized_distance = distance / max_possible_distance
             return (alpha * normalized_distance) + ((1-alpha) * risk)
 
-        best_item = optim_fn(nodes_dict.items(), key=calculate_score)
-        best_coords = best_item[0]
-        best_score = calculate_score(best_item)
+        scored_items = [(coords, calculate_score((coords, values)))
+                        for coords, values in nodes_dict.items()]
 
+        min_score = optim_fn(score for _, score in scored_items)
+        tied_items = [(coords, score)
+                      for coords, score in scored_items if score == min_score]
+
+        best_coords, best_score = random.choice(tied_items)
         return best_coords, best_score
 
     def _reset_distribution(self, position):
@@ -343,6 +185,8 @@ class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
         self.DELTA = 0.1
         # weights to prioritise num_carrying against food collection risk, higher means cares more about num_carrying
         self.RHO = 0.6
+        # Percentage of food to prioritise before return
+        self.ETA = 0.3
         # threshold to return to border
         self.EPS = 0.3
 
@@ -392,10 +236,11 @@ class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
         Considerations: 
             - If carrying + returned == total - 2
             - Number of points carrying
-                - TODO: In the end start
+                - TODO: In the end starts taking only one food at a time, not good
             - Risk from food
             - TODO: Proximity to border
             - TODO: Time remaining
+            - TODO: Dont return if food is very close
         """
         collected_max_points = self.__collected_max_points(game_state)
         enemy_dist_for_border = self._get_enemy_location_distribution(
@@ -404,7 +249,8 @@ class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
             enemy_dist_for_border, self.BETA, min)
 
         carrying = agent.num_carrying
-        normalized_carrying = carrying / (carrying + len(food) - 2)
+        # normalized_carrying = carrying / (carrying + len(food) - 2)
+        normalized_carrying = carrying / (self.ETA * self.total_food)
         return_factor = self.RHO * \
             normalized_carrying + (1-self.RHO) * risk_food
 
@@ -453,20 +299,24 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
             0, self.height) if (x, y) in RunningMudkipsAgent.nodes]
         self.medoid = self._get_medoid(self.team_area)
 
-    def _get_medoid(self, nodes):
-        n = len(nodes)
-        dist_matrix = np.zeros((n, n))
+    def _get_medoid(self, nodes_src, nodes_dest=None):
+        if nodes_dest is None:
+            nodes_dest = nodes_src
+
+        n = len(nodes_src)
+        m = len(nodes_dest)
+        dist_matrix = np.zeros((n, m))
 
         for i in range(n):
-            for j in range(i+1, n):
-                dist = RunningMudkipsAgent.shortest_actions[nodes[i], nodes[j]][0]
+            for j in range(m):
+                dist = RunningMudkipsAgent.shortest_actions[nodes_src[i],
+                                                            nodes_dest[j]][0]
                 dist_matrix[i, j] = dist
-                dist_matrix[j, i] = dist
 
         total_distances = np.sum(dist_matrix, axis=1)
         medoid_idx = np.argmin(total_distances)
 
-        return nodes[medoid_idx]
+        return nodes_src[medoid_idx]
 
     def choose_action(self, game_state: GameState):
         """
@@ -484,9 +334,9 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
         enemy_agents = [game_state.get_agent_state(
             idx) for idx in self.enemy_idxs]
 
-        # Option 1: If no pacman, go to center of grid
+        # Option 1: If no pacman, go to node closest to all borders
         if not enemy_agents[0].is_pacman and not enemy_agents[1].is_pacman:
-            self.medoid = self._get_medoid(food)
+            self.medoid = self._get_medoid(self.team_area, self.border)
             return RunningMudkipsAgent.shortest_actions[loc, self.medoid][1]
 
         # Option 2: If enemy is visible, go to it
