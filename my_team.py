@@ -313,6 +313,12 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
     def __init__(self, index, time_for_computing=.1):
         super().__init__(index, time_for_computing)
 
+        # from given probable opponent positions, picking closest vs highest probable
+        # higher alpha prioritises closer nodes
+        self.ALPHA = 0.3
+        # for how many timesteps to count last eaten food as a valid location
+        self.LAST_EATEN_EXPIRY = 10
+
     def register_initial_state(self, game_state: GameState):
         super().register_initial_state(game_state)
         start = 0 if self.is_red else self.width // 2
@@ -398,7 +404,7 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
 
         # Option 3: If food was eaten in the previous turn
         # TODO: Add expiry time here
-        if len(self.food_eaten) > 0 and self.time - self.food_eaten[-1][1] < 10:
+        if len(self.food_eaten) > 0 and self.time - self.food_eaten[-1][1] < self.LAST_EATEN_EXPIRY:
             food, eaten_time = self.food_eaten[-1]
             loc_probs = [(node, self.oa_distribution[node])
                          for node in self.team_area if self.oa_distribution[node] > 0]
@@ -419,7 +425,7 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
 
         # TODO: Add hyperparameter here
         max_prob_loc, prob = self._get_best_node(
-            enemy_dist, 0.3, max)
+            enemy_dist, self.ALPHA, max)
         destination = max_prob_loc
 
         self.previous_food = self.__get_food(game_state)
