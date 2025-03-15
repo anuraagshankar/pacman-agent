@@ -95,6 +95,8 @@ class RunningMudkipsAgent(CaptureAgent):
         """
         distances = game_state.get_agent_distances()
 
+        manhattan_distances = np.array(
+            [manhattan_distance(agent_location, loc) for loc in nodes])
         true_distances = np.array(
             [RunningMudkipsAgent.shortest_actions[agent_location, loc][0] for loc in nodes])
         enemy_probs = np.array([[RunningMudkipsAgent.location_probs[self.enemy_idxs[i]][loc]
@@ -109,7 +111,7 @@ class RunningMudkipsAgent(CaptureAgent):
             enemy_agent = game_state.get_agent_state(self.enemy_idxs[i])
             if enemy_fn(enemy_agent):
                 enemy_dist_probs[i] = np.array([GameState.get_distance_prob(
-                    x, enemy_distances[i]) for x in true_distances])
+                    x, enemy_distances[i]) for x in manhattan_distances])
                 enemy_dist_probs[i] = enemy_dist_probs[i] * enemy_probs[i]
 
         for i in range(2):
@@ -192,9 +194,9 @@ class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
         # threshold to pickup capsule
         self.DELTA = 0.1
         # RHO_1: prioritizes carrying amount, RHO_2: food risk, 1-RHO_1-RHO_2: proximity to border
-        self.RHO_1, self.RHO_2 = 0.6, 0.4
+        self.RHO_1, self.RHO_2 = 0.5, 0.3
         # Percentage of food to prioritise before return
-        self.ETA = 0.3
+        self.ETA = 0.5
         # threshold to return to border
         self.EPS = 0.3
         # threshold that determines that we are being chased
@@ -234,7 +236,7 @@ class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
             enemy_dist_for_food, self.ALPHA, min)
         destination = min_risk_food
 
-        if not agent.is_pacman:
+        if not agent.is_pacman or risk_food == 0:
             return RunningMudkipsAgent.shortest_actions[loc, destination][1]
 
         # Option 2: Going back option
@@ -311,8 +313,6 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
     def __init__(self, index, time_for_computing=.1):
         super().__init__(index, time_for_computing)
 
-        self.ALPHA = 0.5
-
     def register_initial_state(self, game_state: GameState):
         super().register_initial_state(game_state)
         start = 0 if self.is_red else self.width // 2
@@ -320,6 +320,16 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
         self.team_area = [(x, y) for x in range(start, end) for y in range(
             0, self.height) if (x, y) in RunningMudkipsAgent.nodes]
         self.medoid = self._get_medoid(self.team_area)
+
+        self.previous_food = self.__get_food(game_state)
+        self.current_food = self.__get_food(game_state)
+        self.food_eaten = []
+        self.time = 0
+        self.oa_distribution = {node: 0 for node in RunningMudkipsAgent.graph}
+
+    def __get_food(self, game_state: GameState):
+        food = game_state.get_red_food() if self.is_red else game_state.get_blue_food()
+        return set(food.as_list())
 
     def _get_medoid(self, nodes_src, nodes_dest=None):
         if nodes_dest is None:
@@ -340,10 +350,23 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
 
         return nodes_src[medoid_idx]
 
+    def __update_food_eaten(self):
+        eaten_food = self.previous_food - self.current_food
+        if len(eaten_food) > 0:
+            food = list(eaten_food)[0]
+            self.food_eaten.append((food, self.time))
+            self.__reset_distribution_for_offensive_opponent(food)
+
+        self.__update_distribution_for_offensive_opponent()
+
     def choose_action(self, game_state: GameState):
         """
         Get noisy estimate of of enemy pacman(s), go to most probable location
         """
+        self.time += 1
+        self.current_food = self.__get_food(game_state)
+        self.__update_food_eaten()
+
         self._update_enemy_location(game_state)
         self._reset_enemy_distribution(game_state)
 
@@ -358,17 +381,11 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
         enemy_agents = [game_state.get_agent_state(
             idx) for idx in self.enemy_idxs]
 
-        if not enemy_agents[0].is_pacman and not enemy_agents[1].is_pacman or agent.scared_timer > 0:
-            enemy_dist_for_border = self._get_enemy_location_distribution(
-                loc, game_state, self.border, is_pacman)
-            max_risk_border, risk_border = self._get_best_node(
-                enemy_dist_for_border, self.ALPHA, max)
-            destination = max_risk_border
-            return RunningMudkipsAgent.shortest_actions[loc, destination][1]
-
         # Option 1: If no pacman, go to border closest to all borders
+        # TODO: Change this to based on map symmetry and food left
         if not enemy_agents[0].is_pacman and not enemy_agents[1].is_pacman or agent.scared_timer > 0:
             self.medoid = self._get_medoid(self.border)
+            self.previous_food = self.__get_food(game_state)
             return RunningMudkipsAgent.shortest_actions[loc, self.medoid][1]
 
         # Option 2: If enemy is visible to anyone, go to it
@@ -376,15 +393,73 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
             for j in range(2):
                 pos = self.agent_vision[i][self.enemy_idxs[j]]
                 if enemy_agents[j].is_pacman and pos:
+                    self.previous_food = self.__get_food(game_state)
                     return RunningMudkipsAgent.shortest_actions[loc, pos][1]
 
-        # Option 3: Go to highest probability pacman
-        enemy_dist = self._get_enemy_location_distribution(
-            loc, game_state, self.team_area, is_pacman)
+        # Option 3: If food was eaten in the previous turn
+        # TODO: Add expiry time here
+        if len(self.food_eaten) > 0 and self.time - self.food_eaten[-1][1] < 10:
+            food, eaten_time = self.food_eaten[-1]
+            loc_probs = [(node, self.oa_distribution[node])
+                         for node in self.team_area if self.oa_distribution[node] > 0]
+
+            dist = game_state.get_agent_distances()
+            e_1, e_2 = dist[self.enemy_idxs[0]], dist[self.enemy_idxs[1]]
+            true_dist = manhattan_distance(loc, food)
+
+            noisy_dist = e_1 if abs(
+                e_1-true_dist) < abs(e_2-true_dist) else e_2
+            enemy_dist = self.__get_updated_oa_dist_with_noise(
+                loc_probs, loc, noisy_dist)
+
+        # Option 4: Go to highest probability pacman
+        else:
+            enemy_dist = self._get_enemy_location_distribution(
+                loc, game_state, self.team_area, is_pacman)
+
+        # TODO: Add hyperparameter here
         max_prob_loc, prob = self._get_best_node(
-            enemy_dist, 0.5, max)
+            enemy_dist, 0.3, max)
         destination = max_prob_loc
 
-        # Option 4: Prevent the pacman from getting to an energy dot
-
+        self.previous_food = self.__get_food(game_state)
         return RunningMudkipsAgent.shortest_actions[loc, destination][1]
+
+    def __get_updated_oa_dist_with_noise(self, loc_probs, loc, noisy_dist):
+        # return format { node: (risk, dist) }
+        distribution = {}
+        for node, prob in loc_probs:
+            noise_prob = GameState.get_distance_prob(
+                manhattan_distance(loc, node), noisy_dist)
+            distribution[node] = (
+                prob*noise_prob, RunningMudkipsAgent.shortest_actions[loc, node][0])
+
+        return distribution
+
+    def __reset_distribution_for_offensive_opponent(self, position):
+        """
+        TODO: Assumption of single offensive agent
+        """
+        self.oa_distribution = {node: 0 for node in RunningMudkipsAgent.graph}
+        self.oa_distribution[position] = 1
+
+    def __update_distribution_for_offensive_opponent(self):
+        next_distribution = {node: 0 for node in RunningMudkipsAgent.graph}
+
+        for node, prob in self.oa_distribution.items():
+            if prob == 0:
+                continue
+
+            neighbors = RunningMudkipsAgent.graph[node]
+            transition_prob = prob / (len(neighbors) + 1)
+            next_distribution[node] += transition_prob
+
+            for neighbor in neighbors:
+                next_distribution[neighbor] += transition_prob
+
+        self.oa_distribution = next_distribution
+
+
+def manhattan_distance(xy1, xy2):
+    """Returns the Manhattan distance between points xy1 and xy2"""
+    return abs(xy1[0] - xy2[0]) + abs(xy1[1] - xy2[1])

@@ -11,7 +11,9 @@
         "-r",
         "pacman-contest/src/contest/baseline_team",
         "-b",
-        "my_team.py"
+        "my_team.py",
+        "-l",
+        "RANDOM"
       ]
     },
     {
@@ -24,16 +26,26 @@
         "-r",
         "my_team.py",
         "-b",
-        "pacman-contest/src/contest/baseline_team"
+        "pacman-contest/src/contest/baseline_team",
+        "-l",
+        "RANDOM"
       ]
     },
     {
-      "name": "Play against Yourself",
+      "name": "Play against Old Agent Red",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/pacman-contest/src/contest/capture.py",
       "console": "integratedTerminal",
-      "args": ["-r", "my_team.py", "-b", "my_team.py"]
+      "args": ["-r", "my_team.py", "-b", "old_agent/my_team.py", "-l", "RANDOM"]
+    },
+    {
+      "name": "Play against Old Agent Blue",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/pacman-contest/src/contest/capture.py",
+      "console": "integratedTerminal",
+      "args": ["-b", "my_team.py", "-r", "old_agent/my_team.py", "-l", "RANDOM"]
     }
   ]
 }
