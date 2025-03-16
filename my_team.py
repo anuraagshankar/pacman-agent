@@ -9,8 +9,10 @@
 import random
 import contest.util as util
 import numpy as np
-from utils import create_graph, all_pairs_first_actions
+from utils import create_graph, all_pairs_first_actions, find_entry_points
 import time
+from collections import Counter
+
 
 from contest.capture_agents import CaptureAgent
 from contest.capture import GameState
@@ -328,6 +330,10 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
         self.BETA = 0.4
         # for how many timesteps to count last eaten food as a valid location
         self.LAST_EATEN_EXPIRY = 10
+        # number of times to sample for entry points
+        self.ENTRY_POINT_SAMPLES = 20
+        # entry point minimum distance threshold
+        self.BAD_ENTRY_POINT_THRESHOLD = 5
 
     def register_initial_state(self, game_state: GameState):
         super().register_initial_state(game_state)
@@ -335,13 +341,59 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
         end = self.width // 2 if self.is_red else self.width
         self.team_area = [(x, y) for x in range(start, end) for y in range(
             0, self.height) if (x, y) in RunningMudkipsAgent.nodes]
+        self.enemy_area = [
+            node for node in RunningMudkipsAgent.nodes if node not in self.team_area]
+
         self.medoid = self._get_medoid(self.team_area)
+        entry_points = self.__calc_entry_points(self.team_area)
+        self.bb = entry_points
+        enemy_entry_points = self.__calc_entry_points(self.enemy_area)
+        self.cc = enemy_entry_points
+        self.entry_points = self.__remove_bad_entry_points(
+            entry_points, enemy_entry_points)
+        self.dd = self.entry_points
+        self.cur_entry_point = self.__calc_first_entry_point(
+            game_state)  # this is the index
 
         self.previous_food = self.__get_food(game_state)
         self.current_food = self.__get_food(game_state)
         self.food_eaten = []
         self.time = 0
         self.oa_distribution = {node: 0 for node in RunningMudkipsAgent.graph}
+
+    def __remove_bad_entry_points(self, team_entry_points, enemy_entry_points):
+        filtered_entry_points = []
+        for ep in team_entry_points:
+            min_dist = np.min(
+                [RunningMudkipsAgent.shortest_actions[ep, eep][0] for eep in enemy_entry_points])
+            if min_dist <= self.BAD_ENTRY_POINT_THRESHOLD:
+                filtered_entry_points.append(ep)
+
+        if len(filtered_entry_points) == 0:
+            return team_entry_points
+        return filtered_entry_points
+
+    def __calc_entry_points(self, area):
+        roots = random.sample(area, self.ENTRY_POINT_SAMPLES)
+        entry_point_list = [find_entry_points(
+            RunningMudkipsAgent.graph, root, area) for root in roots]
+
+        all_entry_points = []
+        for s in entry_point_list:
+            all_entry_points.extend(s)
+        self.aa = all_entry_points
+
+        frequency = Counter(all_entry_points)
+        cnt = 0 if max(frequency.values()) == 1 else 1
+
+        return sorted(
+            [element for element, count in frequency.items() if count > cnt])
+
+    def __calc_first_entry_point(self, game_state: GameState):
+        loc = game_state.get_agent_position(self.index)
+        distances = [RunningMudkipsAgent.shortest_actions[loc, ep][0]
+                     for ep in self.entry_points]
+        return np.argmin(distances)
 
     def __get_food(self, game_state: GameState):
         food = game_state.get_red_food() if self.is_red else game_state.get_blue_food()
@@ -401,11 +453,15 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
         # TODO: Change this to based on map symmetry and food left
         if not enemy_agents[0].is_pacman and not enemy_agents[1].is_pacman or agent.scared_timer > 0:
             if len(food) < self.BETA * self.total_food:
-                self.medoid = self._get_medoid(food)
+                destination = self._get_medoid(food)
             else:
-                self.medoid = self._get_medoid(self.border)
+                # self.medoid = self._get_medoid(self.border)
+                if loc == self.entry_points[self.cur_entry_point]:
+                    self.cur_entry_point = (
+                        self.cur_entry_point + 1) % len(self.entry_points)
+                destination = self.entry_points[self.cur_entry_point]
             self.previous_food = self.__get_food(game_state)
-            return RunningMudkipsAgent.shortest_actions[loc, self.medoid][1]
+            return RunningMudkipsAgent.shortest_actions[loc, destination][1]
 
         # Option 2: If enemy is visible to anyone, go to it
         for i in self.team_idxs:

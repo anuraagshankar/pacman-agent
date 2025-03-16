@@ -93,3 +93,36 @@ def create_graph(game_state):
                 graph[(x, y)] = []
 
     return graph
+
+
+def find_entry_points(graph, root, my_area_nodes):
+    # Convert my_area_nodes to a set for O(1) lookups
+    my_area = set(my_area_nodes)
+
+    # Check if root is in enemy territory
+    if root not in my_area:
+        return set()  # Root is already in enemy territory
+
+    visited = set([root])
+    queue = deque([root])
+    entry_points = set()
+
+    while queue and not entry_points:
+        current = queue.popleft()
+
+        # If this is my area node, check if it connects to any enemy nodes
+        if current in my_area:
+            has_enemy_neighbor = False
+
+            for neighbor in graph.get(current, []):
+                if neighbor not in my_area:
+                    # This is an entry point - it connects to enemy territory
+                    entry_points.add(current)
+                    has_enemy_neighbor = True
+
+                # Continue BFS, but only through my area
+                if neighbor in my_area and neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+
+    return entry_points
