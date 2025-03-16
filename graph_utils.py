@@ -20,33 +20,51 @@ def get_action(curr, next_node):
 
 def bfs_distance_and_first_action(graph, source):
     """
-    Find shortest path from source to all other nodes.
-    Returns a dictionary mapping each destination to a tuple of (distance, first_action).
+    Find the shortest path from source to all other nodes.
+    Returns a dictionary mapping each destination to a tuple of 
+    (distance, list_of_first_actions). For the source, the action is ['Stop'].
     """
-    visited = set([source])
-    queue = deque([(source, None, 0)])  # (node, first_action, distance) tuples
-    results = {}
+    # best: maps node -> (distance, set_of_first_actions)
+    best = {source: (0, set())}
+    # Queue holds (node, set_of_first_actions) for that node at the best distance
+    queue = deque([(source, set())])
 
     while queue:
-        current, action, distance = queue.popleft()
-
-        # If this is not the source, record the result
-        if current != source:
-            results[current] = (distance, action)
+        current, actions = queue.popleft()
+        current_distance, _ = best[current]
 
         for neighbor in graph[current]:
-            if neighbor not in visited:
-                visited.add(neighbor)
+            new_distance = current_distance + 1
+            # Determine the first action:
+            # If we are at the source, compute it directly;
+            # otherwise, inherit the first action(s) from the current node.
+            if current == source:
+                new_actions = {get_action(current, neighbor)}
+            else:
+                new_actions = actions
 
-                # Determine the action to take
-                next_action = get_action(current, neighbor)
+            if neighbor not in best:
+                best[neighbor] = (new_distance, new_actions)
+                queue.append((neighbor, new_actions))
+            else:
+                recorded_distance, recorded_actions = best[neighbor]
+                if new_distance < recorded_distance:
+                    best[neighbor] = (new_distance, new_actions)
+                    queue.append((neighbor, new_actions))
+                elif new_distance == recorded_distance:
+                    # Union the new actions with the recorded ones
+                    union_actions = recorded_actions.union(new_actions)
+                    if union_actions != recorded_actions:
+                        best[neighbor] = (recorded_distance, union_actions)
+                        queue.append((neighbor, union_actions))
 
-                # If this is a direct neighbor of the source, this is the first action
-                # Otherwise, propagate the first action that was taken from the source
-                first_action = next_action if current == source else action
-
-                queue.append((neighbor, first_action, distance + 1))
-
+    # Convert the sets of actions to lists.
+    results = {}
+    for node, (dist, actions) in best.items():
+        if node == source:
+            results[node] = (dist, ['Stop'])
+        else:
+            results[node] = (dist, list(actions))
     return results
 
 
@@ -59,7 +77,7 @@ def all_pairs_first_actions(graph):
 
     for source in graph:
         results = bfs_distance_and_first_action(graph, source)
-        all_results[(source, source)] = (0, 'Stop')
+        all_results[(source, source)] = (0, ['Stop'])
         for destination, (distance, action) in results.items():
             all_results[(source, destination)] = (distance, action)
 

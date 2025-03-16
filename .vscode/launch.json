@@ -37,7 +37,14 @@
       "request": "launch",
       "program": "${workspaceFolder}/pacman-contest/src/contest/capture.py",
       "console": "integratedTerminal",
-      "args": ["-r", "my_team.py", "-b", "old_agent/my_team.py", "-l", "RANDOM"]
+      "args": [
+        "-r",
+        "my_team.py",
+        "-b",
+        "old_agent/my_team_v1.py",
+        "-l",
+        "RANDOM"
+      ]
     },
     {
       "name": "Play against Old Agent Blue",
@@ -45,7 +52,14 @@
       "request": "launch",
       "program": "${workspaceFolder}/pacman-contest/src/contest/capture.py",
       "console": "integratedTerminal",
-      "args": ["-b", "my_team.py", "-r", "old_agent/my_team.py", "-l", "RANDOM"]
+      "args": [
+        "-b",
+        "my_team.py",
+        "-r",
+        "old_agent/my_team_v1.py",
+        "-l",
+        "RANDOM"
+      ]
     }
   ]
 }

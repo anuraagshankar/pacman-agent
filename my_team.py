@@ -1,3 +1,9 @@
+"""
+Transitions are probabilistic
+Defensive:
+    Will go hunt when scared
+"""
+
 # my_team.py
 # ---------------
 # Licensing Information: Please do not distribute or publish solutions to this
@@ -9,7 +15,7 @@
 import random
 import contest.util as util
 import numpy as np
-from utils import create_graph, all_pairs_first_actions, find_entry_points
+from graph_utils import create_graph, all_pairs_first_actions, find_entry_points
 import time
 from collections import Counter
 
@@ -239,7 +245,7 @@ class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
         destination = min_risk_food
 
         if not agent.is_pacman or risk_food == 0:
-            return RunningMudkipsAgent.shortest_actions[loc, destination][1]
+            return random.choice(RunningMudkipsAgent.shortest_actions[loc, destination][1])
 
         # Option 2: Going back option
         collected_max_points = self.__collected_max_points(game_state)
@@ -281,7 +287,7 @@ class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
 
         # Option 4: Return during game end
 
-        return RunningMudkipsAgent.shortest_actions[loc, destination][1]
+        return random.choice(RunningMudkipsAgent.shortest_actions[loc, destination][1])
 
     def __are_there_scared_agents(self, game_state: GameState):
         for idx in self.enemy_idxs:
@@ -451,7 +457,7 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
 
         # Option 1: If no pacman, go to either food or border medoid
         # TODO: Change this to based on map symmetry and food left
-        if not enemy_agents[0].is_pacman and not enemy_agents[1].is_pacman or agent.scared_timer > 0:
+        if not enemy_agents[0].is_pacman and not enemy_agents[1].is_pacman:
             if len(food) < self.BETA * self.total_food:
                 destination = self._get_medoid(food)
             else:
@@ -461,7 +467,7 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
                         self.cur_entry_point + 1) % len(self.entry_points)
                 destination = self.entry_points[self.cur_entry_point]
             self.previous_food = self.__get_food(game_state)
-            return RunningMudkipsAgent.shortest_actions[loc, destination][1]
+            return random.choice(RunningMudkipsAgent.shortest_actions[loc, destination][1])
 
         # Option 2: If enemy is visible to anyone, go to it
         for i in self.team_idxs:
@@ -469,7 +475,7 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
                 pos = self.agent_vision[i][self.enemy_idxs[j]]
                 if enemy_agents[j].is_pacman and pos:
                     self.previous_food = self.__get_food(game_state)
-                    return RunningMudkipsAgent.shortest_actions[loc, pos][1]
+                    return random.choice(RunningMudkipsAgent.shortest_actions[loc, pos][1])
 
         # Option 3: If food was eaten in the previous turn
         # TODO: Add expiry time here
@@ -498,7 +504,7 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
         destination = max_prob_loc
 
         self.previous_food = self.__get_food(game_state)
-        return RunningMudkipsAgent.shortest_actions[loc, destination][1]
+        return random.choice(RunningMudkipsAgent.shortest_actions[loc, destination][1])
 
     def __get_updated_oa_dist_with_noise(self, loc_probs, loc, noisy_dist):
         # return format { node: (risk, dist) }
