@@ -186,7 +186,7 @@ class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
         super().__init__(index, time_for_computing)
 
         # food proximity to enemy probable risk, higher means cares more about food proximity
-        self.ALPHA = 0.2
+        self.ALPHA = 0.3
         # border proximity to enemy probable risk, higher means cares more about border proximity
         self.BETA = 0.6
         # capsule proximity to enemy probable risk, higher means cares more about capsule proximity
@@ -263,9 +263,10 @@ class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
             - Proximity to dot
             - Risk from capsule
         """
+        are_agents_scared = self.__are_there_scared_agents(game_state)
         capsules = game_state.get_blue_capsules(
         ) if self.is_red else game_state.get_red_capsules()
-        if len(capsules) > 0 and not collected_max_points:
+        if len(capsules) > 0 and not collected_max_points and not are_agents_scared:
             enemy_dist_for_capsule = self._get_enemy_location_distribution(
                 loc, game_state, capsules, is_not_scared_ghost)
             min_risk_capsule, risk_capsule = self._get_best_node(
@@ -279,6 +280,13 @@ class RunningMudkipsOffensiveAgent(RunningMudkipsAgent):
         # Option 4: Return during game end
 
         return RunningMudkipsAgent.shortest_actions[loc, destination][1]
+
+    def __are_there_scared_agents(self, game_state: GameState):
+        for idx in self.enemy_idxs:
+            if game_state.get_agent_state(idx).scared_timer > self.SCARED_THRESHOLD:
+                return True
+
+        return False
 
     def __is_game_ending(self, game_state: GameState, agent):
         actions_remaining = game_state.data.timeleft // 4
@@ -316,6 +324,8 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
         # from given probable opponent positions, picking closest vs highest probable
         # higher alpha prioritises closer nodes
         self.ALPHA = 0.3
+        # percentage of food to keep food as the center
+        self.BETA = 0.4
         # for how many timesteps to count last eaten food as a valid location
         self.LAST_EATEN_EXPIRY = 10
 
@@ -387,10 +397,13 @@ class RunningMudkipsDefensiveAgent(RunningMudkipsAgent):
         enemy_agents = [game_state.get_agent_state(
             idx) for idx in self.enemy_idxs]
 
-        # Option 1: If no pacman, go to border closest to all borders
+        # Option 1: If no pacman, go to either food or border medoid
         # TODO: Change this to based on map symmetry and food left
         if not enemy_agents[0].is_pacman and not enemy_agents[1].is_pacman or agent.scared_timer > 0:
-            self.medoid = self._get_medoid(self.border)
+            if len(food) < self.BETA * self.total_food:
+                self.medoid = self._get_medoid(food)
+            else:
+                self.medoid = self._get_medoid(self.border)
             self.previous_food = self.__get_food(game_state)
             return RunningMudkipsAgent.shortest_actions[loc, self.medoid][1]
 
